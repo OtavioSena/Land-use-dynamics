@@ -1,0 +1,85 @@
+### Libraries
+library(readxl)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+
+## Open data
+
+data = read.csv("data/processed/tables/rta_v2.csv")
+
+### Functions
+get_response_variable = function(studied_variable)
+{
+  if(studied_variable == "Z_pearson")
+  {
+    return(data$Z)
+  }
+  
+  else
+  {
+    print("Error: choose a valid variable")
+  }
+}
+
+fit_and_prune = function(data, minsplit, studied_var)
+{
+  n_lakes = nrow(data)
+  
+  if (studied_var == "Z_pearson")
+  {
+    rt = rpart(Z ~ Long_Lake + Area_Lake + Area_Subw + Elevation + Inclination + Mean_Water + RWM_22 + CR_Resident,
+               data = data, method = "anova", xval = n_lakes, minsplit = minsplit) 
+  }
+ 
+  else
+  {
+    print("Error: choose a valid variable")
+  } 
+  
+  min_xerror = rt$cptable[which.min(rt$cptable[,"xerror"]),"CP"]
+  #min_xerror = rt$cptable[which.min(rt$cptable[,"xstd"]),"CP"]
+  rt_pruned = prune(rt, cp = min_xerror)
+  return(rt_pruned)
+  #return(rt)
+}
+
+split_data = function(data, i)
+{
+  train = data[-i, ]
+  test = data[i, ]
+  outputs = list(train = train, test = test)
+  return(outputs)
+}
+
+get_rel_error = function(pred, true)
+{
+  error = abs(pred - true)
+  rel_error = error / true
+  return(rel_error)
+}
+
+get_RMSE = function(pred, true)
+{
+  error = pred - true
+  error2 = error^2
+  mse = mean(error2)
+  rmse = sqrt(mse)
+  return(rmse)
+}
+
+get_R2 = function(pred, true)
+{
+  mean = mean(true)
+  n_data = length(pred)
+  SStot = 0
+  SSres = 0
+  for (i in 1:n_data)
+  {
+    SStot = SStot + (mean - true[i] )^2
+    SSres = SSres + (pred[i] - true[i])^2
+  }
+  
+  r2 = 1 - (SSres / SStot)
+  return(r2)
+}
