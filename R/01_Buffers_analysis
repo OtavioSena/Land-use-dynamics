@@ -1,0 +1,169 @@
+# Script to run analysis in BUFFERS -----
+# Otávio S. Monte
+# Last update: 19.Apr.2024
+
+# Start
+rm(list=ls())
+cat("\014")
+
+# Load packages
+library(car)
+library(xlsx)
+library(readxl)
+library(ggplot2)
+library(tidyverse)
+library(inspectdf)
+
+# Get a preview of sheet names
+sheets = excel_sheets(path = 'data/raw/tables/100Lakes_A.xlsx')
+sheets
+
+# Load data
+rd = read_excel('data/raw/tables/100Lakes_A.xlsx', 
+                sheet = 'Antropic_Proportion', col_names = TRUE)
+dat = data.frame(rd)
+dat = na.omit(dat)
+
+# Check data
+
+#gt(dat) |>
+#  gt_theme_538() |> 
+#  tab_header(title = "100Lakes dataset")
+
+# Transforming data (log e logit)
+Logit = as.numeric(dat$Antropic_Use)
+Logit = car::logit(Logit)
+
+Log_distance = as.numeric(dat$Distance_Buffer)
+Log_distance = log10(Log_distance)
+
+# Inserting the new columns into the dataframe
+dat$Logit = Logit
+dat$Log_distance = Log_distance
+
+dat %>%
+  group_by(Lake) %>%
+  count() # 98 lakes
+
+# Saving table
+write.csv(x = dat, file = 'data/processed/tables/antropic_use.csv',
+          row.names = F)
+
+rm(list=ls())
+
+# Load data
+dat = read.csv(file = 'data/processed/tables/antropic_use.csv')
+
+lake = unique(dat$Lake)
+distance = unique(dat$Log_distance) # Distance_Buffer or Log_distance
+
+# Creating empty matrices for the results
+p = matrix(nrow = length(lake), ncol = length(distance))
+r2 = matrix(nrow = length(lake), ncol = length(distance))
+slope = matrix(nrow = length(lake), ncol = length(distance))
+R = matrix(nrow = length(lake), ncol = length(distance))
+
+# Looping the analysis
+for(i in 1:nrow(p)){
+  for(j in 1:ncol(p)){
+    tab = dat[which(dat$Lake == lake[i] & 
+                      dat$Log_distance == distance[j]),] # Distance_Buffer or Log_distance
+    if(nrow(tab) != 0) {
+      reg = lm(tab$Antropic_Use ~ tab$Year) # y = Antropic_Use or Logit
+      
+      r.squared = try(summary(reg)$r.squared, silent = T)
+      p_value = try(summary(reg)$coefficients[2,4], silent = T)
+      slope_sl = try(summary(reg)$coefficients[2,1], silent = T)
+      if(class(p_value) == 'try-error'){
+        p_value = 'ex'
+        slope_sl = 'ex'
+        r.squared = 'ex'
+      }
+      
+      r2[i,j] = r.squared
+      p[i,j] = p_value
+      slope[i,j] = slope_sl
+      
+    }
+  }
+}
+
+# Looping the Pearson's Correlation
+for(i in 1:nrow(p)){
+  for(j in 1:ncol(p)){
+    tab = dat[which(dat$Lake == lake[i] & 
+                      dat$Log_distance == distance[j]),] # Distance_Buffer or Log_distance
+    if(nrow(tab) != 0) {
+      cor = cor(tab$Year, tab$Antropic_Use) # Run the analysis
+      
+      R[i,j] = cor
+      
+    }
+  }
+}
+
+# Transforming matrix to a dataframe
+r2 = as.data.frame(r2)
+colnames(r2) = distance
+rownames(r2) = lake
+
+p = as.data.frame(p)
+colnames(p) = distance
+rownames(p) = lake
+
+slope = as.data.frame(slope)
+colnames(slope) = distance
+rownames(slope) = lake
+
+R = as.data.frame(R)
+colnames(R) = distance
+rownames(R) = lake
+
+# Saving tables
+write.csv(r2, file = 'results/analysis/r2.csv')
+write.csv(p, file = 'results/analysis/p.csv')
+write.csv(slope, file = 'results/analysis/slope.csv')
+write.csv(R, file = 'results/analysis/R.csv')
+
+rm(list=ls())
+
+# Load data
+r2 = read.csv(file = 'results/analysis/r2.csv')
+p = read.csv(file = 'results/analysis/p.csv')
+slope = read.csv(file = 'results/analysis/slope.csv')
+R = read.csv(file = 'results/analysis/R.csv')
+
+# Transforming characters to numeric AND tidying
+r2 = r2 %>%
+  mutate_at(c(2:62), as.numeric) %>%
+  pivot_longer(cols = 2:62, names_to = 'Distance', values_to = 'r2')
+
+p = p %>%
+  mutate_at(c(2:62), as.numeric) %>%
+  pivot_longer(cols = 2:62, names_to = 'Distance', values_to = 'p_value')
+
+slope = slope %>%
+  mutate_at(c(2:62), as.numeric) %>%
+  pivot_longer(cols = 2:62, names_to = 'Distance', values_to = 'slope')
+
+R = R %>%
+  mutate_at(c(2:62), as.numeric) %>%
+  pivot_longer(cols = 2:62, names_to = 'Distance', values_to = 'R')
+
+# Merging datasets
+left_join(x = r2, y = p, by = NULL) -> join1
+left_join(x = join1, y = slope, by = NULL) -> join2
+left_join(x = join2, y = R, by = NULL) -> join3
+
+rename(join3, Lake = 'X') -> join3
+Water_Type = unique(select(read.csv(file = 'data/processed/tables/antropic_use.csv'), Lake, Water_Type))
+
+left_join(x = join3, y = Water_Type, by = NULL) -> fulljoin
+fulljoin$Distance = as.numeric(gsub('X', '', fulljoin$Distance))
+fulljoin = select(fulljoin, Lake, Water_Type, Distance, r2, p_value, slope, R)
+
+fulljoin = fulljoin[!is.na(fulljoin$slope),]
+
+# Saving new dataset
+write.csv(fulljoin, file = 'data/processed/tables/full_dataset.csv', 
+          row.names = F)
