@@ -1,0 +1,113 @@
+# Otávio S. Monte
+# Last update: 03.Jun.2024
+
+# Detach packages
+for (i in sessionInfo()$otherPkgs) {
+  detach()
+}
+
+# Start
+rm(list=ls())
+cat("\014")
+graphics.off()
+
+### Loading packages
+library(usdm)
+#library(xlsx)
+library(readxl)
+library(dplyr)
+library(vegan)
+library(gtools)
+library(SciViews)
+library(corrplot)
+library(adespatial)
+library(MASS)
+library(tidyverse)
+library(caret)
+library(magrittr)
+library(rpart.plot)
+library(partykit)
+
+# RTA
+studied_variable = "Z_pearson"
+source("R/002_RTA_source.R") ## source code
+ 
+n_lakes = nrow(data)
+n_lakes
+
+response_variable = get_response_variable(studied_variable)
+
+# Compute RMSE, R squared, relative error on leave-one-out cross valited test data for different values of min_split
+list_x_plot = list()
+list_rel_err = list()
+list_R2 = list()
+list_RMSE = list()
+for (i in 1:50){
+  list_pred = response_variable
+  for (j in 1:n_lakes)
+  {
+    splitted_data = split_data(data, j)
+    tree = fit_and_prune(splitted_data$train, i, studied_variable)
+    test = splitted_data$test
+    pred = predict(tree, test)
+    
+    list_pred[j] = pred
+  }
+  mean_rel_error = mean(get_rel_error(list_pred, response_variable))
+  rmse = get_RMSE(list_pred, response_variable)
+  r2 = get_R2(list_pred, response_variable)
+  
+  list_x_plot[i] = i 
+  list_rel_err[i] = mean_rel_error
+  list_R2[i] = r2
+  list_RMSE[i] = rmse
+  
+  print(sprintf("MinSplit: %d", i))
+  print(sprintf("RMSE: %f", rmse))
+  print(sprintf("LOOCV mean relative error: %f", mean_rel_error))
+  print(sprintf("LOOCV R^2: %f", r2))
+}
+
+# Plot RMSE and R2 for all different values of min_split
+plot(list_x_plot, list_RMSE, col = "black")
+plot(list_x_plot, list_R2, col = "red")
+plot(list_x_plot, list_rel_err, col = "green")
+
+plot_list = map_df(list_x_plot, as_tibble) |> bind_rows()
+RMSE_list = map_df(list_RMSE, as_tibble) |> bind_rows()
+R2_list = map_df(list_R2, as_tibble) |> bind_rows()
+
+list = data.frame(plot_list, RMSE_list, R2_list)
+names(list) = c("plot", "RMSE", "R2")
+
+### Compute final tree from chosen parameters
+chosen_minSplit = min(list$plot[list$RMSE == min(list$RMSE)])
+
+final_tree = fit_and_prune(data, chosen_minSplit, studied_variable)
+
+final_tree$cptable
+rsq.rpart(final_tree)
+print(rsq.rpart(final_tree))
+plotcp(final_tree)
+
+sink("results/analysis/RTA_v2.txt")
+cat("### RTA analysis\n")
+print(summary(final_tree))
+sink()
+
+pred_final = predict(final_tree, data)
+mean_rel_error = mean(get_rel_error(pred_final, response_variable))
+rmse = get_RMSE(pred_final, response_variable)
+r2 = get_R2(pred_final, response_variable)
+
+r2
+rmse
+mean_rel_error
+
+#
+tmp = printcp(final_tree)
+rsq.val = 1-tmp[,c(3,4)] 
+rsq.val
+tmp[,c(3,4)]
+
+rpart.plot(final_tree)
